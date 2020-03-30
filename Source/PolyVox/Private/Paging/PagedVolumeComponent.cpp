@@ -30,6 +30,8 @@ SOFTWARE.
 #include "Engine/World.h"
 #include "Engine/Texture2D.h"
 #include "Mesh/VoxelProceduralMeshComponent.h"
+#include "DrawDebugHelpers.h"
+#include "Utils/ArrayHelper.h"
 #include "PagedVolumeComponent.h"
 
 
@@ -191,7 +193,7 @@ void UPagedVolumeComponent::SetVoxelByVector(const FVector& Coordinates, FVoxel 
 	SetVoxelByCoordinates((int32)Coordinates.X, (int32)Coordinates.Y, (int32)Coordinates.Z, Voxel);
 }
 
-void UPagedVolumeComponent::PageInChunksAroundPlayer(AController* PlayerController, const int32& MaxWorldHeight, const uint8& NumberOfChunksToPageIn, TArray<FVoxelMaterial> Materials, bool bUseMarchingCubes)
+void UPagedVolumeComponent::PageInChunksAroundPlayer(AController* PlayerController, const int32 MaxWorldHeight, const uint8 NumberOfChunksToPageIn, TArray<FVoxelMaterial> Materials, bool bUseMarchingCubes)
 {
 	if (PlayerController == NULL)
 	{
@@ -353,7 +355,6 @@ bool UPagedVolumeComponent::CanReuseLastAccessedChunk(int32 ChunkX, int32 ChunkY
 
 APagedChunk* UPagedVolumeComponent::GetChunk(int32 ChunkX, int32 ChunkY, int32 ChunkZ)
 {
-	UE_LOG(LogPolyVox, Log, TEXT("Fetching chunk at %d, %d, %d."), ChunkX, ChunkY, ChunkZ);
 	APagedChunk* chunk = nullptr;
 
 	// Extract the lower five bits from each position component.
@@ -391,7 +392,7 @@ APagedChunk* UPagedVolumeComponent::GetChunk(int32 ChunkX, int32 ChunkY, int32 C
 		// The chunk was not found so we will create a new one.
 		FVector chunkPos(ChunkX, ChunkY, ChunkZ);
 		chunk = GetWorld()->SpawnActor<APagedChunk>();
-		chunk->InitChunk(chunkPos, ChunkSideLength, Pager, VoxelSize);
+		chunk->InitChunk(chunkPos, ChunkSideLength, Pager, VoxelSize, RandomSeed);
 		chunk->bDueToBePagedOut = false;
 
 		// Store the chunk at the appropriate place in out chunk array. Ideally this place is
@@ -472,11 +473,11 @@ void UPagedVolumeComponent::SetRegionHeightmap(const FRegion& Region, const TArr
 			{
 				if (z <= targetHeight)
 				{
-					SetVoxelByCoordinates(x, y, z, Filler);
+					SetVoxelByCoordinates(y, x, z, Filler);
 				}
 				else
 				{
-					SetVoxelByCoordinates(x, y, z, FVoxel::GetEmptyVoxel());
+					SetVoxelByCoordinates(y, x, z, FVoxel::GetEmptyVoxel());
 				}
 			}
 		}
@@ -491,22 +492,25 @@ void UPagedVolumeComponent::SetRegionVoxels(const FRegion& Region, const TArray<
 	}
 
 	int32 regionWidth = URegionHelper::GetWidthInCells(Region);
+	int32 regionDepth = URegionHelper::GetDepthInCells(Region);
+
 	for (int x = Region.LowerX; x < Region.UpperX; x++)
 	{
 		for (int y = Region.LowerY; y < Region.UpperY; y++)
 		{
-			float targetHeightPercent = UArrayHelper::Get2DFloat(Heights, x, y, regionWidth);
-			int32 targetHeight = FMath::CeilToInt(URegionHelper::GetDepthInCells(Region) * targetHeightPercent);
 			uint8 targetMaterial = UArrayHelper::Get2DUint8(Materials, x, y, regionWidth);
+			
+			float targetHeightPercent = UArrayHelper::Get2DFloat(Heights, x, y, regionWidth);
+			int32 targetHeight = Region.LowerZ + FMath::RoundToInt(regionDepth * targetHeightPercent);
 			for (int z = Region.LowerZ; z < Region.UpperZ; z++)
 			{
 				if (z <= targetHeight)
 				{
-					SetVoxelByCoordinates(x, y, z, FVoxel::MakeVoxel(targetMaterial, true));
+					SetVoxelByCoordinates(y, x, z, FVoxel::MakeVoxel(targetMaterial, true));
 				}
 				else
 				{
-					SetVoxelByCoordinates(x, y, z, FVoxel::GetEmptyVoxel());
+					SetVoxelByCoordinates(y, x, z, FVoxel::GetEmptyVoxel());
 				}
 			}
 		}
@@ -613,7 +617,23 @@ void UPagedVolumeComponent::DrawVolumeAsDebug(const FRegion& DebugRegion)
 				}
 				else
 				{
-					DrawDebugBox(GetWorld(), FVector(x * VoxelSize, y * VoxelSize, z * VoxelSize), FVector(VoxelSize, VoxelSize, VoxelSize), FColor::Red, true);
+					FVoxel neighbor = GetVoxelByCoordinates(x, y, z + 1);
+					if (neighbor.bIsSolid)
+					{
+						continue;
+					}
+					FColor color = FColor::Red;
+
+					FVector v0 = FVector(x * VoxelSize, y * VoxelSize, z * VoxelSize);
+					FVector v1 = FVector(v0.X, v0.Y + VoxelSize, v0.Z);
+					FVector v2 = FVector(v0.X + VoxelSize, v0.Y, v0.Z);
+					FVector v3 = FVector(v2.X, v1.Y, v0.Z);
+					//DrawDebugSphere(world, v0, 100, 4, color, true);
+					DrawDebugLine(GetWorld(), v0, v1, color, true);
+					DrawDebugLine(GetWorld(), v0, v2, color, true);
+					DrawDebugLine(GetWorld(), v3, v2, color, true);
+					DrawDebugLine(GetWorld(), v3, v1, color, true);
+					//DrawDebugBox(GetWorld(), FVector(x * VoxelSize, y * VoxelSize, z * VoxelSize), FVector(VoxelSize, VoxelSize, VoxelSize), FColor::Red, true);
 				}
 			}
 		}
